@@ -1,475 +1,370 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import AgentPanel from "@/components/AgentPanel";
+import GameBoard from "@/components/GameBoard";
+import Minimap from "@/components/Minimap";
+import ToolsPanel from "@/components/ToolsPanel";
 import {
   createEmptyBoard,
+  getAIMove,
   getGameState,
-  getAIMove as computeAIMove,
   type Board,
-  type Player,
+  type GameStatus,
   type MoveEvaluation,
+  type Player,
 } from "@/lib/ai-engine";
+import type { AgentAction } from "@/lib/agent-actions";
+import { DIFFICULTIES, DIFFICULTY_BLURBS, serializeBoard, type Difficulty } from "@/lib/game-tools";
 import {
   registerWebMCPTools,
   unregisterAllTools,
   type ToolRegistration,
 } from "@/lib/webmcp-tools";
-import GameBoard from "@/components/GameBoard";
-import ToolsPanel from "@/components/ToolsPanel";
 
-// ─── Agent Log Entry ───────────────────────────────────────────────────────
-
-interface LogEntry {
-  id: number;
-  time: string;
-  source: "agent" | "system" | "user";
-  message: string;
+interface Move {
+  player: Exclude<Player, null>;
+  position: number;
 }
 
-// ─── Page Component ────────────────────────────────────────────────────────
+interface Game {
+  board: Board;
+  currentPlayer: Player;
+  status: GameStatus;
+  winLine: number[] | null;
+  history: Move[];
+  lastMove: number | null;
+}
+
+type GameEvent =
+  | { type: "move"; position: number; mark: Exclude<Player, null> }
+  | { type: "undo" }
+  | { type: "reset" };
+
+function initialGame(): Game {
+  return {
+    board: createEmptyBoard(),
+    currentPlayer: "X",
+    status: "playing",
+    winLine: null,
+    history: [],
+    lastMove: null,
+  };
+}
+
+function fromHistory(history: Move[]): Game {
+  const board = createEmptyBoard();
+  for (const move of history) board[move.position] = move.player;
+  const state = getGameState(board);
+  return {
+    board,
+    currentPlayer: state.currentPlayer,
+    status: state.status,
+    winLine: state.winLine,
+    history,
+    lastMove: history.at(-1)?.position ?? null,
+  };
+}
+
+const noopSubscribe = () => () => {};
+
+/** MCTS is stochastic, so evaluations are only rendered after hydration. */
+function useIsClient(): boolean {
+  return useSyncExternalStore(
+    noopSubscribe,
+    () => true,
+    () => false
+  );
+}
+
+function gameReducer(game: Game, event: GameEvent): Game {
+  switch (event.type) {
+    case "move": {
+      if (game.status !== "playing") return game;
+      if (game.board[event.position] !== null) return game;
+      if (game.currentPlayer !== event.mark) return game;
+      return fromHistory([...game.history, { player: event.mark, position: event.position }]);
+    }
+    case "undo":
+      return game.history.length === 0 ? game : fromHistory(game.history.slice(0, -1));
+    case "reset":
+      return initialGame();
+  }
+}
 
 export default function Home() {
-  // Game state
-  const [board, setBoard] = useState<Board>(createEmptyBoard());
-  const [currentPlayer, setCurrentPlayer] = useState<Player>("X");
-  const [status, setStatus] = useState<string>("playing");
-  const [moveHistory, setMoveHistory] = useState<{ player: Player; position: number }[]>([]);
-  const [winLine, setWinLine] = useState<number[] | null>(null);
-  const [difficulty, setDifficultyState] = useState<string>("alpha");
-  const [evaluations, setEvaluations] = useState<MoveEvaluation[]>([]);
+  const [game, dispatch] = useReducer(gameReducer, undefined, initialGame);
+  const [difficulty, setDifficulty] = useState<Difficulty>("alpha");
+  const [engineAutoPlay, setEngineAutoPlay] = useState(true);
   const [showEval, setShowEval] = useState(true);
-  const [isThinking, setIsThinking] = useState(false);
 
-  // WebMCP state
   const [tools, setTools] = useState<ToolRegistration[]>([]);
   const [isSupported, setIsSupported] = useState(false);
   const [isRegistered, setIsRegistered] = useState(false);
 
-  // Agent log
-  const [log, setLog] = useState<LogEntry[]>([]);
-  const logRef = useRef<HTMLDivElement>(null);
-  const logId = useRef(0);
+  const { board, currentPlayer, status, winLine, history, lastMove } = game;
 
-  // State getter for WebMCP tools
-  const getState = useCallback(() => ({
-    board,
-    currentPlayer,
-    status,
-    moveHistory,
-    difficulty,
-  }), [board, currentPlayer, status, moveHistory, difficulty]);
+  // ─── Engine ────────────────────────────────────────────────────────────
 
-  const addLog = useCallback((source: LogEntry["source"], message: string) => {
-    logId.current++;
-    const entry: LogEntry = {
-      id: logId.current,
-      time: new Date().toLocaleTimeString("en-US", { hour12: false }),
-      source,
-      message,
-    };
-    setLog((prev) => [...prev.slice(-50), entry]);
-  }, []);
-
-  // Scroll log to bottom
-  useEffect(() => {
-    if (logRef.current) {
-      logRef.current.scrollTop = logRef.current.scrollHeight;
-    }
-  }, [log]);
-
-  // ─── Game Actions ──────────────────────────────────────────────────────
-
-  const playMove = useCallback(
-    (pos: number): boolean => {
-      if (board[pos] || status !== "playing" || currentPlayer !== "X") return false;
-
-      const newBoard = [...board];
-      newBoard[pos] = "X";
-      const state = getGameState(newBoard);
-
-      setBoard(newBoard);
-      setCurrentPlayer(state.currentPlayer);
-      setStatus(state.status);
-      setMoveHistory((prev) => [...prev, { player: "X", position: pos }]);
-      setWinLine(state.winLine);
-      addLog("user", `Placed X at position ${pos}`);
-
-      // Compute evaluations for display
-      if (state.status === "playing") {
-        const evals = computeAIMove(newBoard, "O", difficulty as "easy" | "medium" | "hard" | "alpha");
-        setEvaluations(evals.evaluations);
-      }
-
-      return true;
-    },
-    [board, status, currentPlayer, difficulty, addLog]
-  );
-
-  const getAIMoveAction = useCallback(() => {
-    if (status !== "playing" || currentPlayer !== "O") return null;
-    return computeAIMove(board, "O", difficulty as "easy" | "medium" | "hard" | "alpha");
-  }, [board, currentPlayer, status, difficulty]);
-
-  const undoMove = useCallback((): boolean => {
-    if (moveHistory.length < 2) return false;
-    // Undo last two moves (human + AI response)
-    const newHistory = moveHistory.slice(0, -2);
-    const newBoard = createEmptyBoard();
-    for (const entry of newHistory) {
-      newBoard[entry.position] = entry.player;
-    }
-    setBoard(newBoard);
-    setMoveHistory(newHistory);
-    setCurrentPlayer("X");
-    setStatus("playing");
-    setWinLine(null);
-    setEvaluations([]);
-    addLog("system", "Undid last move pair");
-    return true;
-  }, [moveHistory, addLog]);
-
-  const resetGame = useCallback(() => {
-    setBoard(createEmptyBoard());
-    setCurrentPlayer("X");
-    setStatus("playing");
-    setMoveHistory([]);
-    setWinLine(null);
-    setEvaluations([]);
-    setIsThinking(false);
-    addLog("system", "Game reset");
-  }, [addLog]);
-
-  const setDifficulty = useCallback(
-    (d: string) => {
-      setDifficultyState(d);
-      addLog("system", `Difficulty set to ${d}`);
-    },
-    [addLog]
-  );
-
-  // ─── AI Auto-Play ─────────────────────────────────────────────────────
+  const isThinking = engineAutoPlay && status === "playing" && currentPlayer === "O";
 
   useEffect(() => {
-    if (status !== "playing" || currentPlayer !== "O" || isThinking) return;
-
-    let cancelled = false;
-    setIsThinking(true);
-
-    // Simulate brief "thinking" delay (200-600ms based on difficulty)
-    const delay = difficulty === "easy" ? 200 : difficulty === "medium" ? 300 : difficulty === "hard" ? 500 : 700;
+    if (!isThinking) return;
 
     const timer = setTimeout(() => {
-      if (cancelled) return;
+      const { move } = getAIMove(board, "O", difficulty);
+      dispatch({ type: "move", position: move, mark: "O" });
+    }, 350);
 
-      const result = computeAIMove(board, "O", difficulty as "easy" | "medium" | "hard" | "alpha");
-      if (!result) { setIsThinking(false); return; }
+    return () => clearTimeout(timer);
+  }, [board, difficulty, isThinking]);
 
-      const newBoard = [...board];
-      newBoard[result.move] = "O";
-      const state = getGameState(newBoard);
+  const isClient = useIsClient();
 
-      setBoard(newBoard);
-      setCurrentPlayer(state.currentPlayer);
-      setStatus(state.status);
-      setMoveHistory((prev) => [...prev, { player: "O", position: result.move }]);
-      setWinLine(state.winLine);
-      setEvaluations(result.evaluations);
-      setIsThinking(false);
-      addLog("agent", `AI placed O at position ${result.move} (confidence: ${Math.round(result.evaluations[0]?.confidence * 100 || 0)}%)`);
-    }, delay);
+  const evaluations = useMemo<MoveEvaluation[]>(() => {
+    if (!isClient || !showEval || status !== "playing" || currentPlayer === null) return [];
+    return getAIMove(board, currentPlayer, difficulty).evaluations;
+  }, [isClient, board, currentPlayer, status, difficulty, showEval]);
 
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [board, currentPlayer, status, difficulty, isThinking, addLog]);
+  // ─── Actions ───────────────────────────────────────────────────────────
 
-  // ─── Human Click Handler ──────────────────────────────────────────────
+  const playSquare = useCallback((position: number) => {
+    dispatch({ type: "move", position, mark: "X" });
+  }, []);
 
-  const handleCellClick = useCallback(
-    (pos: number) => {
-      if (isThinking) return;
-      playMove(pos);
-    },
-    [isThinking, playMove]
+  const undoMove = useCallback(() => {
+    dispatch({ type: "undo" });
+  }, []);
+
+  const resetGame = useCallback(() => {
+    dispatch({ type: "reset" });
+  }, []);
+
+  const applyAgentAction = useCallback((action: AgentAction) => {
+    switch (action.type) {
+      case "play_move":
+        dispatch({ type: "move", position: action.position, mark: action.mark });
+        break;
+      case "undo_move":
+        dispatch({ type: "undo" });
+        dispatch({ type: "undo" });
+        break;
+      case "reset_game":
+        dispatch({ type: "reset" });
+        break;
+      case "set_difficulty":
+        setDifficulty(action.difficulty);
+        break;
+    }
+  }, []);
+
+  const gameContext = useMemo(
+    () => ({
+      board: serializeBoard(board),
+      currentPlayer,
+      status,
+      difficulty,
+      engineAutoPlay,
+      you: "X",
+      moveHistory: history.map((move) => `${move.player}@${move.position}`),
+    }),
+    [board, currentPlayer, status, difficulty, engineAutoPlay, history]
   );
 
-  // ─── WebMCP Registration ──────────────────────────────────────────────
+  // ─── WebMCP ────────────────────────────────────────────────────────────
 
-  const handleRegister = useCallback(async () => {
-    addLog("system", "Registering WebMCP tools...");
-    const registry = await registerWebMCPTools(getState, (updater) => {
-      const updates = updater(getState());
-      if (updates.board) setBoard(updates.board);
-      if (updates.currentPlayer) setCurrentPlayer(updates.currentPlayer);
-      if (updates.status) setStatus(updates.status);
-      if (updates.difficulty) setDifficultyState(updates.difficulty);
-    }, {
-      playMove,
-      undoMove,
-      resetGame,
-      setDifficulty,
-      getAIMove: getAIMoveAction,
-      getEvaluations: () => evaluations,
-    });
+  // WebMCP tools are registered once and read live state through this ref.
+  const liveState = useRef({ game, difficulty, evaluations });
+
+  useEffect(() => {
+    liveState.current = { game, difficulty, evaluations };
+  }, [game, difficulty, evaluations]);
+
+  const registerTools = useCallback(async () => {
+    const registry = await registerWebMCPTools(
+      () => {
+        const current = liveState.current;
+        return {
+          board: current.game.board,
+          currentPlayer: current.game.currentPlayer,
+          status: current.game.status,
+          moveHistory: current.game.history,
+          difficulty: current.difficulty,
+        };
+      },
+      () => undefined,
+      {
+        playMove: (position) => {
+          dispatch({ type: "move", position, mark: "X" });
+          return true;
+        },
+        undoMove: () => {
+          dispatch({ type: "undo" });
+          return true;
+        },
+        resetGame: () => dispatch({ type: "reset" }),
+        setDifficulty: (value) => setDifficulty(value as Difficulty),
+        getAIMove: () =>
+          getAIMove(liveState.current.game.board, "O", liveState.current.difficulty),
+        getEvaluations: () => liveState.current.evaluations,
+      }
+    );
 
     setTools([...registry.tools]);
     setIsSupported(registry.isSupported);
     setIsRegistered(registry.isRegistered);
+  }, []);
 
-    const count = registry.tools.filter((t) => t.status === "registered").length;
-    addLog("system", `Registered ${count}/${registry.tools.length} tools`);
-  }, [getState, playMove, undoMove, resetGame, setDifficulty, getAIMoveAction, evaluations, addLog]);
-
-  const handleUnregister = useCallback(async () => {
-    const registry = { tools, isSupported, isRegistered };
-    await unregisterAllTools(registry);
+  const unregisterTools = useCallback(async () => {
+    await unregisterAllTools({ tools, isSupported, isRegistered });
     setIsRegistered(false);
-    setTools((prev) => prev.map((t) => ({ ...t, status: "pending" as const })));
-    addLog("system", "All WebMCP tools unregistered");
-  }, [tools, isSupported, isRegistered, addLog]);
+    setTools((previous) => previous.map((tool) => ({ ...tool, status: "pending" as const })));
+  }, [tools, isSupported, isRegistered]);
 
-  // Auto-register on mount
   useEffect(() => {
-    const timer = setTimeout(() => {
-      handleRegister();
-    }, 500);
-    return () => clearTimeout(timer);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    void registerTools();
+  }, [registerTools]);
+
+  // ─── Render ────────────────────────────────────────────────────────────
+
+  const headline =
+    status === "X_wins"
+      ? "You win"
+      : status === "O_wins"
+        ? "Engine wins"
+        : status === "draw"
+          ? "Draw"
+          : isThinking
+            ? "Engine thinking…"
+            : currentPlayer === "X"
+              ? "Your turn"
+              : "Engine to move";
 
   return (
-    <div className="min-h-screen flex flex-col">
-      {/* Header */}
-      <header className="border-b border-zinc-800/50 bg-zinc-950/80 backdrop-blur-sm sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-violet-600 flex items-center justify-center text-sm font-bold shadow-lg shadow-purple-500/25">
-              ⬡
-            </div>
-            <div>
-              <h1 className="text-lg font-bold text-white tracking-tight">WebMCP Go</h1>
-              <p className="text-[10px] text-zinc-500 font-mono">agent-ready tic tac toe</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-zinc-800/50 border border-zinc-700/50">
-              <div className={`w-1.5 h-1.5 rounded-full ${isRegistered ? "bg-emerald-400 animate-pulse" : "bg-zinc-600"}`} />
-              <span className="text-[10px] font-mono text-zinc-400">
-                {isRegistered ? "WebMCP Active" : "WebMCP Pending"}
-              </span>
-            </div>
-            <a
-              href="https://developer.chrome.com/docs/ai/webmcp"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-[10px] font-mono text-zinc-500 hover:text-zinc-300 transition-colors"
-            >
-              docs ↗
-            </a>
-          </div>
-        </div>
-      </header>
-
-      {/* Main Content */}
-      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Left: Game Controls */}
-          <div className="lg:col-span-3 space-y-4">
-            {/* Difficulty */}
-            <div className="rounded-2xl bg-zinc-900/80 border border-zinc-800 p-5">
-              <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-3">
-                AI Difficulty
-              </h3>
-              <div className="grid grid-cols-2 gap-1.5">
-                {(["easy", "medium", "hard", "alpha"] as const).map((d) => (
-                  <button
-                    key={d}
-                    onClick={() => setDifficulty(d)}
-                    disabled={isThinking}
-                    className={`px-3 py-2 rounded-lg text-xs font-medium transition-all ${
-                      difficulty === d
-                        ? "bg-purple-600 text-white shadow-lg shadow-purple-500/25"
-                        : "bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700/50 hover:text-zinc-200"
-                    }`}
-                  >
-                    {d === "alpha" ? "⬡ Alpha" : d.charAt(0).toUpperCase() + d.slice(1)}
-                  </button>
-                ))}
-              </div>
-              <p className="text-[10px] text-zinc-600 mt-3 leading-relaxed">
-                {difficulty === "easy" && "50 MCTS iterations — beginner friendly"}
-                {difficulty === "medium" && "200 iterations — basic strategy"}
-                {difficulty === "hard" && "500 iterations — strong play"}
-                {difficulty === "alpha" && "1500 iterations — AlphaGo-level MCTS"}
-              </p>
-            </div>
-
-            {/* Actions */}
-            <div className="rounded-2xl bg-zinc-900/80 border border-zinc-800 p-5 space-y-2">
-              <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-3">
-                Actions
-              </h3>
-              <button
-                onClick={undoMove}
-                disabled={moveHistory.length < 2 || isThinking}
-                className="w-full px-3 py-2.5 rounded-lg text-xs font-medium bg-zinc-800/50 text-zinc-300 hover:bg-zinc-700/50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-              >
-                ↩ Undo Last Move
-              </button>
-              <button
-                onClick={resetGame}
-                className="w-full px-3 py-2.5 rounded-lg text-xs font-medium bg-zinc-800/50 text-zinc-300 hover:bg-zinc-700/50 transition-colors"
-              >
-                ↻ New Game
-              </button>
-              <button
-                onClick={() => setShowEval(!showEval)}
-                className="w-full px-3 py-2.5 rounded-lg text-xs font-medium bg-zinc-800/50 text-zinc-300 hover:bg-zinc-700/50 transition-colors"
-              >
-                {showEval ? "◯ Hide AI Eval" : "◉ Show AI Eval"}
-              </button>
-            </div>
-
-            {/* Stats */}
-            <div className="rounded-2xl bg-zinc-900/80 border border-zinc-800 p-5">
-              <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-3">
-                Game Stats
-              </h3>
-              <div className="space-y-2 text-xs">
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">Moves played</span>
-                  <span className="text-zinc-300 font-mono">{moveHistory.length}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">X wins</span>
-                  <span className="text-emerald-400 font-mono">{log.filter((l) => l.message.includes("win")).length || "—"}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">AI (O) wins</span>
-                  <span className="text-red-400 font-mono">{log.filter((l) => l.message.includes("win")).length || "—"}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">Difficulty</span>
-                  <span className="text-zinc-300 font-mono">{difficulty}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Center: Game Board */}
-          <div className="lg:col-span-5 flex items-start justify-center">
-            <GameBoard
-              board={board}
-              onCellClick={handleCellClick}
-              winLine={winLine}
-              status={status}
-              currentPlayer={currentPlayer}
-              evaluations={evaluations}
-              isThinking={isThinking}
-              showEval={showEval}
-            />
-          </div>
-
-          {/* Right: WebMCP Tools + Agent Log */}
-          <div className="lg:col-span-4 space-y-4">
-            <ToolsPanel
-              tools={tools}
-              isSupported={isSupported}
-              isRegistered={isRegistered}
-              onRegister={handleRegister}
-              onUnregister={handleUnregister}
-            />
-
-            {/* Agent Activity Log */}
-            <div className="rounded-2xl bg-zinc-900/80 border border-zinc-800 overflow-hidden">
-              <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-800">
-                <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
-                  Agent Activity
-                </h3>
-                <span className="text-[10px] font-mono text-zinc-600">{log.length} events</span>
-              </div>
-              <div
-                ref={logRef}
-                className="h-64 overflow-y-auto px-5 py-2 space-y-1 font-mono text-[11px]"
-              >
-                {log.length === 0 ? (
-                  <div className="text-zinc-600 text-center py-8">
-                    Agent activity will appear here...
-                  </div>
-                ) : (
-                  log.map((entry) => (
-                    <div key={entry.id} className="flex gap-2 leading-relaxed">
-                      <span className="text-zinc-700 flex-shrink-0">{entry.time}</span>
-                      <span
-                        className={`flex-shrink-0 ${
-                          entry.source === "agent"
-                            ? "text-purple-400"
-                            : entry.source === "user"
-                              ? "text-emerald-400"
-                              : "text-zinc-500"
-                        }`}
-                      >
-                        {entry.source === "agent" ? "◆" : entry.source === "user" ? "○" : "·"}
-                      </span>
-                      <span className="text-zinc-400">{entry.message}</span>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* WebMCP Explainer */}
-        <div className="mt-12 rounded-2xl bg-zinc-900/50 border border-zinc-800/50 p-6 sm:p-8">
-          <h2 className="text-lg font-bold text-zinc-200 mb-4">How WebMCP Works Here</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 text-sm text-zinc-400 leading-relaxed">
-            <div>
-              <div className="text-purple-400 font-semibold mb-2">1. Register Tools</div>
-              <p>
-                This page calls{" "}
-                <code className="text-xs font-mono bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-300">
-                  document.modelContext.registerTool()
-                </code>{" "}
-                to expose 9 structured tools — play_move, get_game_state, get_ai_move, evaluate_position,
-                reset_game, and more. Each tool has a JSON schema for its inputs and outputs.
-              </p>
-            </div>
-            <div>
-              <div className="text-purple-400 font-semibold mb-2">2. Agent Discovers</div>
-              <p>
-                Any browser AI agent (ChatGPT, Gemini, Claude) visiting this page can discover
-                the registered tools. The agent sees the tool names, descriptions, and schemas — no
-                DOM scraping needed. It knows exactly what actions are available.
-              </p>
-            </div>
-            <div>
-              <div className="text-purple-400 font-semibold mb-2">3. Agent Executes</div>
-              <p>
-                The agent calls tools by name with structured inputs. For example, it can call{" "}
-                <code className="text-xs font-mono bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-300">
-                  play_move({"{position: 4}"})
-                </code>{" "}
-                to place a mark, or{" "}
-                <code className="text-xs font-mono bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-300">
-                  get_ai_move()
-                </code>{" "}
-                to see what the AI recommends. Tools execute visibly in the page.
-              </p>
-            </div>
-          </div>
-        </div>
-      </main>
-
-      {/* Footer */}
-      <footer className="border-t border-zinc-800/50 py-6">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 flex items-center justify-between text-[10px] text-zinc-600">
-          <span>WebMCP Go — AlphaGo-inspired Tic Tac Toe with Agent Tools</span>
-          <span>
-            Built with WebMCP Imperative API · MCTS + Policy/Value Networks
+    <div className="flex min-h-screen flex-col lg:flex-row">
+      <aside className="flex w-full shrink-0 flex-col border-white/5 bg-black/30 lg:h-screen lg:w-[340px] lg:border-r">
+        <div className="flex items-center gap-2.5 border-b border-white/5 px-4 py-4">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-500/15 text-[13px] text-violet-300">
+            ⬡
+          </span>
+          <span className="flex-1">
+            <span className="block text-[13px] font-semibold tracking-tight text-white/90">AlphagoX</span>
+            <span className="block font-mono text-[10px] text-white/35">mcts tic tac toe · eve agent</span>
           </span>
         </div>
-      </footer>
+
+        <Minimap
+          board={board}
+          winLine={winLine}
+          currentPlayer={currentPlayer}
+          status={status}
+          moveCount={history.length}
+          lastMove={lastMove}
+        />
+
+        <AgentPanel gameContext={gameContext} onAgentAction={applyAgentAction} />
+      </aside>
+
+      <main className="flex min-w-0 flex-1 flex-col items-center gap-8 px-6 py-10 lg:h-screen lg:overflow-y-auto">
+        <div className="flex w-full max-w-xl items-baseline justify-between">
+          <h1 className={`text-xl font-semibold tracking-tight ${isThinking ? "text-violet-300" : "text-white/90"}`}>
+            {headline}
+          </h1>
+          <span className="font-mono text-[11px] text-white/30">{difficulty}</span>
+        </div>
+
+        <GameBoard
+          board={board}
+          onCellClick={playSquare}
+          winLine={winLine}
+          status={status}
+          evaluations={evaluations}
+          isThinking={isThinking}
+          showEval={showEval}
+          lastMove={lastMove}
+        />
+
+        <div className="w-full max-w-xl space-y-4">
+          <div className="rounded-xl border border-white/5 bg-white/[0.02] p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-[11px] font-medium uppercase tracking-[0.14em] text-white/40">Engine</h2>
+              <span className="text-[10px] text-white/30">{DIFFICULTY_BLURBS[difficulty]}</span>
+            </div>
+            <div className="grid grid-cols-4 gap-1.5">
+              {DIFFICULTIES.map((level) => (
+                <button
+                  key={level}
+                  type="button"
+                  onClick={() => setDifficulty(level)}
+                  className={`rounded-lg px-3 py-2 text-[11px] font-medium transition ${
+                    difficulty === level
+                      ? "bg-violet-500/90 text-white"
+                      : "bg-white/[0.04] text-white/50 hover:bg-white/[0.08] hover:text-white/80"
+                  }`}
+                >
+                  {level}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <ControlButton onClick={undoMove} disabled={history.length === 0}>
+              undo
+            </ControlButton>
+            <ControlButton onClick={resetGame}>new game</ControlButton>
+            <ControlButton onClick={() => setShowEval((value) => !value)} active={showEval}>
+              evaluation overlay
+            </ControlButton>
+            <ControlButton onClick={() => setEngineAutoPlay((value) => !value)} active={engineAutoPlay}>
+              engine auto-play
+            </ControlButton>
+          </div>
+
+          <ToolsPanel
+            tools={tools}
+            isSupported={isSupported}
+            isRegistered={isRegistered}
+            onRegister={registerTools}
+            onUnregister={unregisterTools}
+          />
+        </div>
+      </main>
     </div>
+  );
+}
+
+function ControlButton({
+  onClick,
+  disabled,
+  active,
+  children,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  active?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`rounded-lg border px-3 py-1.5 text-[11px] transition disabled:opacity-30 ${
+        active
+          ? "border-violet-400/30 bg-violet-400/10 text-violet-200"
+          : "border-white/5 bg-white/[0.02] text-white/55 hover:border-white/10 hover:text-white/85"
+      }`}
+    >
+      {children}
+    </button>
   );
 }
