@@ -16,6 +16,22 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+## Sidebar agent
+
+The sidebar agent is built with [eve](https://eve.dev) and talks to a free OpenRouter model.
+Requires Node 24+. To enable it, add to `.env.local`:
+
+```bash
+OPENROUTER_API_KEY=sk-or-...
+# optional, defaults to z-ai/glm-5.2:free
+OPENROUTER_MODEL=z-ai/glm-5.2:free
+```
+
+Without a key the game still works and the sidebar shows a "key missing" state.
+The agent discovers the tools in `agent/tools/` — position analysis tools run on the
+server, while `play_move`, `undo_move`, `reset_game` and `set_difficulty` return actions
+the browser applies to the live board.
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.

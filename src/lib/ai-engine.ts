@@ -226,7 +226,7 @@ function createNode(
     visits: 0,
     wins: 0,
     move,
-    untriedMoves: parent ? getAvailableMoves(board) : [],
+    untriedMoves: getAvailableMoves(board),
   };
 }
 
@@ -334,7 +334,7 @@ function selectBestChild(node: MCTSNode): MCTSNode {
  * Uses the value network to evaluate the final position.
  */
 function rollout(board: Board, currentPlayer: Player, maxDepth: number): number {
-  let currentBoard = [...board];
+  const currentBoard = [...board];
   let player = currentPlayer;
   let depth = 0;
 
