@@ -1,52 +1,38 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AlphagoX
 
-## Getting Started
+An AlphaGo-inspired Tic Tac Toe game with browser-side [WebMCP](https://webmcp.dev) tools that any browser AI agent can discover and call via `document.modelContext`.
 
-First, run the development server:
+## Getting started
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000). You play `X`, the built-in MCTS engine plays `O`.
 
-## Sidebar agent
+## WebMCP tools
 
-The sidebar agent is built with [eve](https://eve.dev) and talks to a free OpenRouter model.
-Requires Node 24+. To enable it, add to `.env.local`:
+On page load the game registers nine tools on `document.modelContext` so in-browser AI agents can read and play the live board:
 
-```bash
-OPENROUTER_API_KEY=sk-or-...
-# optional, defaults to z-ai/glm-5.2:free
-OPENROUTER_MODEL=z-ai/glm-5.2:free
-```
+- `get_game_state` — board, current player, status, move count, difficulty
+- `play_move` — place `X` or `O` at a position (0–8)
+- `get_ai_move` — best move from the AlphaGo-style MCTS engine
+- `get_available_moves` — empty squares
+- `evaluate_position` — policy + value network scores per square
+- `undo_last_move` — take back the last move
+- `reset_game` — start a fresh game
+- `set_difficulty` — easy / medium / hard / alpha
+- `get_move_history` — full move history
 
-Without a key the game still works and the sidebar shows a "key missing" state.
-The agent discovers the tools in `agent/tools/` — position analysis tools run on the
-server, while `play_move`, `undo_move`, `reset_game` and `set_difficulty` return actions
-the browser applies to the live board.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+`ToolsPanel` in the sidebar shows live registration status. Tools can be toggled (unregister/register) at runtime.
 
 ## Learn More
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- [Next.js Documentation](https://nextjs.org/docs) — framework docs
 
 ## Deploy on Vercel
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+vercel deploy
+```

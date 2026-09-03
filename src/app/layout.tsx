@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "WebMCP Go — Agent-Ready Tic Tac Toe",
+  title: "AlphagoX — WebMCP Tic Tac Toe",
   description:
     "An AlphaGo-inspired Tic Tac Toe game with WebMCP tools exposed for any browser AI agent to discover and use.",
 };

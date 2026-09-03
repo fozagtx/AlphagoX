@@ -9,7 +9,6 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import AgentPanel from "@/components/AgentPanel";
 import GameBoard from "@/components/GameBoard";
 import Minimap from "@/components/Minimap";
 import ToolsPanel from "@/components/ToolsPanel";
@@ -22,8 +21,7 @@ import {
   type MoveEvaluation,
   type Player,
 } from "@/lib/ai-engine";
-import type { AgentAction } from "@/lib/agent-actions";
-import { DIFFICULTIES, DIFFICULTY_BLURBS, serializeBoard, type Difficulty } from "@/lib/game-tools";
+import { DIFFICULTIES, DIFFICULTY_BLURBS, type Difficulty } from "@/lib/game-tools";
 import {
   registerWebMCPTools,
   unregisterAllTools,
@@ -148,37 +146,6 @@ export default function Home() {
     dispatch({ type: "reset" });
   }, []);
 
-  const applyAgentAction = useCallback((action: AgentAction) => {
-    switch (action.type) {
-      case "play_move":
-        dispatch({ type: "move", position: action.position, mark: action.mark });
-        break;
-      case "undo_move":
-        dispatch({ type: "undo" });
-        dispatch({ type: "undo" });
-        break;
-      case "reset_game":
-        dispatch({ type: "reset" });
-        break;
-      case "set_difficulty":
-        setDifficulty(action.difficulty);
-        break;
-    }
-  }, []);
-
-  const gameContext = useMemo(
-    () => ({
-      board: serializeBoard(board),
-      currentPlayer,
-      status,
-      difficulty,
-      engineAutoPlay,
-      you: "X",
-      moveHistory: history.map((move) => `${move.player}@${move.position}`),
-    }),
-    [board, currentPlayer, status, difficulty, engineAutoPlay, history]
-  );
-
   // ─── WebMCP ────────────────────────────────────────────────────────────
 
   // WebMCP tools are registered once and read live state through this ref.
@@ -257,7 +224,7 @@ export default function Home() {
           </span>
           <span className="flex-1">
             <span className="block text-[13px] font-semibold tracking-tight text-white/90">AlphagoX</span>
-            <span className="block font-mono text-[10px] text-white/35">mcts tic tac toe · eve agent</span>
+            <span className="block font-mono text-[10px] text-white/35">mcts tic tac toe</span>
           </span>
         </div>
 
@@ -269,8 +236,6 @@ export default function Home() {
           moveCount={history.length}
           lastMove={lastMove}
         />
-
-        <AgentPanel gameContext={gameContext} onAgentAction={applyAgentAction} />
       </aside>
 
       <main className="flex min-w-0 flex-1 flex-col items-center gap-8 px-6 py-10 lg:h-screen lg:overflow-y-auto">

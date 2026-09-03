@@ -1,8 +1,8 @@
 /**
- * Shared game logic for the eve agent tools and the browser UI.
+ * Shared game logic for the browser UI.
  *
- * The board travels between the browser and the agent as a nine character
- * string in row-major order, where "." marks an empty square:
+ * The board travels as a nine character string in row-major order,
+ * where "." marks an empty square:
  *
  *   "X.O.X..O." → X at 0 and 4, O at 2 and 7
  */
@@ -122,53 +122,3 @@ export function openSquares(boardInput: string) {
 function round(value: number) {
   return Math.round(value * 100) / 100;
 }
-
-// ─── Tool catalog ──────────────────────────────────────────────────────────
-// One entry per file in `agent/tools/`. The sidebar reads this through
-// `/api/agent/tools` so the UI shows exactly what the agent can call.
-
-export type ToolKind = "read" | "act";
-
-export interface AgentToolInfo {
-  name: string;
-  description: string;
-  kind: ToolKind;
-}
-
-export const AGENT_TOOLS: AgentToolInfo[] = [
-  {
-    name: "list_available_moves",
-    description: "List every empty square on a board",
-    kind: "read",
-  },
-  {
-    name: "evaluate_position",
-    description: "Score every empty square with the MCTS policy and value networks",
-    kind: "read",
-  },
-  {
-    name: "get_best_move",
-    description: "Compute the strongest move for a player at a difficulty",
-    kind: "read",
-  },
-  {
-    name: "play_move",
-    description: "Place a mark on a square of the live board",
-    kind: "act",
-  },
-  {
-    name: "undo_move",
-    description: "Take back the last pair of moves",
-    kind: "act",
-  },
-  {
-    name: "reset_game",
-    description: "Clear the board and start a new game",
-    kind: "act",
-  },
-  {
-    name: "set_difficulty",
-    description: "Switch the built-in opponent between easy, medium, hard and alpha",
-    kind: "act",
-  },
-];
