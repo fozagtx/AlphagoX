@@ -10,7 +10,6 @@ import {
   useSyncExternalStore,
 } from "react";
 import GameBoard from "@/components/GameBoard";
-import Minimap from "@/components/Minimap";
 import ToolsPanel from "@/components/ToolsPanel";
 import {
   createEmptyBoard,
@@ -74,7 +73,6 @@ function fromHistory(history: Move[]): Game {
 
 const noopSubscribe = () => () => {};
 
-/** MCTS is stochastic, so evaluations are only rendered after hydration. */
 function useIsClient(): boolean {
   return useSyncExternalStore(
     noopSubscribe,
@@ -102,7 +100,7 @@ export default function Home() {
   const [game, dispatch] = useReducer(gameReducer, undefined, initialGame);
   const [difficulty, setDifficulty] = useState<Difficulty>("alpha");
   const [engineAutoPlay, setEngineAutoPlay] = useState(true);
-  const [showEval, setShowEval] = useState(true);
+  const [showEval, setShowEval] = useState(false);
 
   const [tools, setTools] = useState<ToolRegistration[]>([]);
   const [isSupported, setIsSupported] = useState(false);
@@ -110,18 +108,14 @@ export default function Home() {
 
   const { board, currentPlayer, status, winLine, history, lastMove } = game;
 
-  // ─── Engine ────────────────────────────────────────────────────────────
-
   const isThinking = engineAutoPlay && status === "playing" && currentPlayer === "O";
 
   useEffect(() => {
     if (!isThinking) return;
-
     const timer = setTimeout(() => {
       const { move } = getAIMove(board, "O", difficulty);
       dispatch({ type: "move", position: move, mark: "O" });
     }, 350);
-
     return () => clearTimeout(timer);
   }, [board, difficulty, isThinking]);
 
@@ -131,8 +125,6 @@ export default function Home() {
     if (!isClient || !showEval || status !== "playing" || currentPlayer === null) return [];
     return getAIMove(board, currentPlayer, difficulty).evaluations;
   }, [isClient, board, currentPlayer, status, difficulty, showEval]);
-
-  // ─── Actions ───────────────────────────────────────────────────────────
 
   const playSquare = useCallback((position: number) => {
     dispatch({ type: "move", position, mark: "X" });
@@ -146,11 +138,9 @@ export default function Home() {
     dispatch({ type: "reset" });
   }, []);
 
-  // ─── WebMCP ────────────────────────────────────────────────────────────
+  // ─── WebMCP ────────────────────────────────────────────────────────
 
-  // WebMCP tools are registered once and read live state through this ref.
   const liveState = useRef({ game, difficulty, evaluations });
-
   useEffect(() => {
     liveState.current = { game, difficulty, evaluations };
   }, [game, difficulty, evaluations]);
@@ -184,7 +174,6 @@ export default function Home() {
         getEvaluations: () => liveState.current.evaluations,
       }
     );
-
     setTools([...registry.tools]);
     setIsSupported(registry.isSupported);
     setIsRegistered(registry.isRegistered);
@@ -200,52 +189,49 @@ export default function Home() {
     void registerTools();
   }, [registerTools]);
 
-  // ─── Render ────────────────────────────────────────────────────────────
+  const statusText =
+    status === "X_wins" ? "You win"
+    : status === "O_wins" ? "Engine wins"
+    : status === "draw" ? "Draw"
+    : isThinking ? "Engine thinking…"
+    : currentPlayer === "X" ? "Your turn"
+    : "Engine to move";
 
-  const headline =
-    status === "X_wins"
-      ? "You win"
-      : status === "O_wins"
-        ? "Engine wins"
-        : status === "draw"
-          ? "Draw"
-          : isThinking
-            ? "Engine thinking…"
-            : currentPlayer === "X"
-              ? "Your turn"
-              : "Engine to move";
+  const statusColor =
+    status === "X_wins" ? "text-[#3da55e]"
+    : status === "O_wins" ? "text-[#f5f0e8]"
+    : status === "draw" ? "text-[#c9a84c]"
+    : isThinking ? "text-[#c9a84c]"
+    : "text-[#8b7355]";
 
   return (
-    <div className="flex min-h-screen flex-col lg:flex-row">
-      <aside className="flex w-full shrink-0 flex-col border-white/5 bg-black/30 lg:h-screen lg:w-[340px] lg:border-r">
-        <div className="flex items-center gap-2.5 border-b border-white/5 px-4 py-4">
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-500/15 text-[13px] text-violet-300">
-            ⬡
+    <div className="relative flex min-h-screen flex-col items-center justify-center px-4 py-8">
+      {/* Background decorative elements */}
+      <div className="pointer-events-none fixed inset-0 z-0">
+        {/* Window light */}
+        <div className="absolute right-[10%] top-0 h-[60%] w-[35%] bg-gradient-to-b from-white/[0.06] to-transparent rounded-b-[100px]" />
+        {/* Shelf */}
+        <div className="absolute right-[5%] top-[30%] h-[6px] w-[25%] bg-[#5a3a20]/60 rounded shadow-[0_2px_4px_rgba(0,0,0,0.2)]" />
+        {/* Plant silhouette */}
+        <div className="absolute right-[6%] top-[5%] text-[80px] opacity-[0.04] select-none">🌿</div>
+        {/* Lamp glow */}
+        <div className="absolute left-[8%] top-[25%] h-[120px] w-[120px] rounded-full bg-[#e8d0a0]/[0.04] blur-3xl" />
+      </div>
+
+      {/* Main content */}
+      <div className="relative z-10 flex w-full max-w-2xl flex-col items-center gap-6">
+        {/* Status bar */}
+        <div className="flex items-center gap-4 rounded-full bg-white/10 px-5 py-2 backdrop-blur-sm border border-white/10 shadow-[0_2px_8px_rgba(0,0,0,0.08)]">
+          <span className={`text-sm font-semibold tracking-wide ${statusColor} transition-colors duration-300`}>
+            {statusText}
           </span>
-          <span className="flex-1">
-            <span className="block text-[13px] font-semibold tracking-tight text-white/90">AlphagoX</span>
-            <span className="block font-mono text-[10px] text-white/35">mcts tic tac toe</span>
-          </span>
+          <span className="h-4 w-px bg-white/10" />
+          <span className="font-mono text-[11px] text-[#8b7355]">move {history.length}</span>
+          <span className="h-4 w-px bg-white/10" />
+          <span className="font-mono text-[11px] text-[#8b7355]">{difficulty}</span>
         </div>
 
-        <Minimap
-          board={board}
-          winLine={winLine}
-          currentPlayer={currentPlayer}
-          status={status}
-          moveCount={history.length}
-          lastMove={lastMove}
-        />
-      </aside>
-
-      <main className="flex min-w-0 flex-1 flex-col items-center gap-8 px-6 py-10 lg:h-screen lg:overflow-y-auto">
-        <div className="flex w-full max-w-xl items-baseline justify-between">
-          <h1 className={`text-xl font-semibold tracking-tight ${isThinking ? "text-violet-300" : "text-white/90"}`}>
-            {headline}
-          </h1>
-          <span className="font-mono text-[11px] text-white/30">{difficulty}</span>
-        </div>
-
+        {/* Game Board */}
         <GameBoard
           board={board}
           onCellClick={playSquare}
@@ -257,43 +243,65 @@ export default function Home() {
           lastMove={lastMove}
         />
 
-        <div className="w-full max-w-xl space-y-4">
-          <div className="rounded-xl border border-white/5 bg-white/[0.02] p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-[11px] font-medium uppercase tracking-[0.14em] text-white/40">Engine</h2>
-              <span className="text-[10px] text-white/30">{DIFFICULTY_BLURBS[difficulty]}</span>
-            </div>
-            <div className="grid grid-cols-4 gap-1.5">
-              {DIFFICULTIES.map((level) => (
-                <button
-                  key={level}
-                  type="button"
-                  onClick={() => setDifficulty(level)}
-                  className={`rounded-lg px-3 py-2 text-[11px] font-medium transition ${
-                    difficulty === level
-                      ? "bg-violet-500/90 text-white"
-                      : "bg-white/[0.04] text-white/50 hover:bg-white/[0.08] hover:text-white/80"
-                  }`}
-                >
-                  {level}
-                </button>
-              ))}
-            </div>
-          </div>
+        {/* Controls */}
+        <div className="flex flex-wrap items-center justify-center gap-3 rounded-2xl bg-white/10 px-5 py-3 backdrop-blur-sm border border-white/10 shadow-[0_2px_8px_rgba(0,0,0,0.08)]">
+          <button
+            type="button"
+            onClick={undoMove}
+            disabled={history.length === 0}
+            className="rounded-lg bg-white/[0.06] px-3.5 py-2 text-[11px] font-medium text-[#8b7355] transition hover:bg-white/[0.12] hover:text-[#5a4a35] disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            Undo
+          </button>
+          <button
+            type="button"
+            onClick={resetGame}
+            className="rounded-lg bg-white/[0.06] px-3.5 py-2 text-[11px] font-medium text-[#8b7355] transition hover:bg-white/[0.12] hover:text-[#5a4a35]"
+          >
+            New Game
+          </button>
+          <span className="h-5 w-px bg-white/10" />
+          <button
+            type="button"
+            onClick={() => setShowEval((v) => !v)}
+            className={`rounded-lg px-3.5 py-2 text-[11px] font-medium transition ${
+              showEval
+                ? "bg-[#c9a84c]/20 text-[#c9a84c]"
+                : "bg-white/[0.06] text-[#8b7355] hover:bg-white/[0.12]"
+            }`}
+          >
+            Eval
+          </button>
+          <button
+            type="button"
+            onClick={() => setEngineAutoPlay((v) => !v)}
+            className={`rounded-lg px-3.5 py-2 text-[11px] font-medium transition ${
+              engineAutoPlay
+                ? "bg-[#c9a84c]/20 text-[#c9a84c]"
+                : "bg-white/[0.06] text-[#8b7355] hover:bg-white/[0.12]"
+            }`}
+          >
+            Auto
+          </button>
+          <span className="h-5 w-px bg-white/10" />
+          {DIFFICULTIES.map((level) => (
+            <button
+              key={level}
+              type="button"
+              onClick={() => setDifficulty(level)}
+              className={`rounded-lg px-3 py-2 text-[11px] font-medium transition ${
+                difficulty === level
+                  ? "bg-[#c9a84c]/20 text-[#c9a84c] ring-1 ring-[#c9a84c]/30"
+                  : "bg-white/[0.06] text-[#8b7355] hover:bg-white/[0.12] hover:text-[#5a4a35]"
+              }`}
+            >
+              {level}
+            </button>
+          ))}
+        </div>
 
-          <div className="flex flex-wrap gap-2">
-            <ControlButton onClick={undoMove} disabled={history.length === 0}>
-              undo
-            </ControlButton>
-            <ControlButton onClick={resetGame}>new game</ControlButton>
-            <ControlButton onClick={() => setShowEval((value) => !value)} active={showEval}>
-              evaluation overlay
-            </ControlButton>
-            <ControlButton onClick={() => setEngineAutoPlay((value) => !value)} active={engineAutoPlay}>
-              engine auto-play
-            </ControlButton>
-          </div>
-
+        {/* ToolsPanel */}
+        <div className="w-full max-w-md">
           <ToolsPanel
             tools={tools}
             isSupported={isSupported}
@@ -302,34 +310,17 @@ export default function Home() {
             onUnregister={unregisterTools}
           />
         </div>
-      </main>
-    </div>
-  );
-}
 
-function ControlButton({
-  onClick,
-  disabled,
-  active,
-  children,
-}: {
-  onClick: () => void;
-  disabled?: boolean;
-  active?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className={`rounded-lg border px-3 py-1.5 text-[11px] transition disabled:opacity-30 ${
-        active
-          ? "border-violet-400/30 bg-violet-400/10 text-violet-200"
-          : "border-white/5 bg-white/[0.02] text-white/55 hover:border-white/10 hover:text-white/85"
-      }`}
-    >
-      {children}
-    </button>
+        {/* Brand */}
+        <div className="mt-2 text-center">
+          <h1 className="text-[11px] font-medium tracking-[0.2em] uppercase text-[#8b7355]/60">
+            AlphagoX
+          </h1>
+          <p className="mt-1 font-mono text-[9px] text-[#8b7355]/40">
+            mcts tic tac toe · webmcp
+          </p>
+        </div>
+      </div>
+    </div>
   );
 }

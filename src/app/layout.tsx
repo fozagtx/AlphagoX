@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "AlphagoX — WebMCP Tic Tac Toe",
+  title: "AlphagoX — Premium Tic Tac Toe",
   description:
     "An AlphaGo-inspired Tic Tac Toe game with WebMCP tools exposed for any browser AI agent to discover and use.",
 };
@@ -28,7 +28,7 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-[#0a0a0f] text-white">
+      <body className="min-h-full flex flex-col">
         {children}
       </body>
     </html>
